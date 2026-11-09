@@ -106,7 +106,12 @@ async function fetchResults() {
 
   const response = await fetch(url, {
     method: "GET",
-    headers: API_HEADERS,
+    headers: {
+      "Accept": "application/json, text/plain, */*",
+      "Accept-Language": "en-US,en;q=0.9",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    },
     cache: "no-store"
   });
 
@@ -120,24 +125,16 @@ async function fetchResults() {
   const list = extractResults(json);
 
   if (!list.length) {
-    throw new Error(
-      "Results API returned no results"
-    );
+    throw new Error("Results API returned no results");
   }
 
-  const results = list
+  return list
     .filter(item => /^\d+$/.test(getIssue(item)))
     .sort((a, b) => {
       const x = BigInt(getIssue(a));
       const y = BigInt(getIssue(b));
-
-      if (x > y) return -1;
-      if (x < y) return 1;
-
-      return 0;
+      return x > y ? -1 : x < y ? 1 : 0;
     });
-
-  return results;
 }
 
 // ==========================================
