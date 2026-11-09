@@ -2,9 +2,9 @@ require("dotenv").config();
 
 const { createClient } = require("@supabase/supabase-js");
 
-// ================================
+// ==========================================
 // CONFIGURATION
-// ================================
+// ==========================================
 
 const RESULT_API =
   "https://draw.ar-lottery01.com/WinGo/WinGo_1M/GetHistoryIssuePage.json";
@@ -12,37 +12,51 @@ const RESULT_API =
 const PLANNER_BASE =
   "https://wingo.oss-ap-southeast-7.aliyuncs.com/WinGo_1_";
 
-const INTERVAL = 5000; // Check every 5 seconds
+const INTERVAL = 5000;
 
-// ================================
+// Request headers
+const API_HEADERS = {
+  Accept: "application/json, text/plain, */*",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  Referer: "https://draw.ar-lottery01.com/",
+  Origin: "https://draw.ar-lottery01.com"
+};
+
+// ==========================================
 // SUPABASE CONNECTION
-// ================================
+// ==========================================
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error("❌ Supabase credentials missing in .env");
+  console.error("❌ Supabase credentials missing");
   process.exit(1);
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// ================================
-// HELPER FUNCTIONS
-// ================================
+console.log("✅ Supabase connected");
 
-// Get period number from API item
+// ==========================================
+// HELPER FUNCTIONS
+// ==========================================
+
 function getIssue(item) {
   return String(
-    item.issueNumber ?? item.issue ?? item.period ?? ""
+    item.issueNumber ??
+    item.issue ??
+    item.period ??
+    ""
   );
 }
 
-// Get result number (0–9)
 function getNumber(item) {
   const value =
-    item.number ?? item.result ?? item.openNumber;
+    item.number ??
+    item.result ??
+    item.openNumber;
 
   if (
     value === undefined ||
@@ -54,30 +68,23 @@ function getNumber(item) {
 
   const number = Number(value);
 
-  if (
-    Number.isInteger(number) &&
+  return Number.isInteger(number) &&
     number >= 0 &&
     number <= 9
-  ) {
-    return number;
-  }
-
-  return null;
+    ? number
+    : null;
 }
 
-// Convert number to Big / Small
 function getSize(number) {
   return number >= 5 ? "Big" : "Small";
 }
 
-// Calculate next period safely
 function nextPeriod(period) {
   return (BigInt(period) + 1n)
     .toString()
     .padStart(period.length, "0");
 }
 
-// Find results list in API response
 function extractResults(json) {
   const candidates = [
     json?.data?.list,
@@ -90,17 +97,18 @@ function extractResults(json) {
   return candidates.find(Array.isArray) || [];
 }
 
-// ================================
-// FETCH ALL AVAILABLE RESULTS
-// ================================
+// ==========================================
+// FETCH RESULTS
+// ==========================================
 
 async function fetchResults() {
-  const response = await fetch(
-    RESULT_API + "?_ts=" + Date.now(),
-    {
-      cache: "no-store"
-    }
-  );
+  const url = RESULT_API + "?_ts=" + Date.now();
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: API_HEADERS,
+    cache: "no-store"
+  });
 
   if (!response.ok) {
     throw new Error(
@@ -118,9 +126,7 @@ async function fetchResults() {
   }
 
   const results = list
-    .filter(item => {
-      return /^\d+$/.test(getIssue(item));
-    })
+    .filter(item => /^\d+$/.test(getIssue(item)))
     .sort((a, b) => {
       const x = BigInt(getIssue(a));
       const y = BigInt(getIssue(b));
@@ -134,15 +140,17 @@ async function fetchResults() {
   return results;
 }
 
-// ================================
+// ==========================================
 // FETCH PLANNER PREDICTION
-// ================================
+// ==========================================
 
 async function fetchPlannerPrediction(targetPeriod) {
   const url =
     `${PLANNER_BASE}${targetPeriod}_planner4_bs_plan`;
 
   const response = await fetch(url, {
+    method: "GET",
+    headers: API_HEADERS,
     cache: "no-store"
   });
 
@@ -156,17 +164,15 @@ async function fetchPlannerPrediction(targetPeriod) {
   const code = json?.content?.bs;
 
   if (code !== "b" && code !== "s") {
-    throw new Error(
-      "Invalid planner signal"
-    );
+    throw new Error("Invalid planner signal");
   }
 
   return code === "b" ? "Big" : "Small";
 }
 
-// ================================
+// ==========================================
 // VERIFY PENDING PREDICTIONS
-// ================================
+// ==========================================
 
 async function verifyPendingPredictions(results) {
   const { data: pendingPredictions, error } =
@@ -181,12 +187,12 @@ async function verifyPendingPredictions(results) {
     );
   }
 
-  if (!pendingPredictions || !pendingPredictions.length) {
+  if (!pendingPredictions?.length) {
     console.log("📭 No pending predictions");
     return;
   }
 
-  // Create Period → Actual Size map
+  // Create Period → Result map
   const actualResults = new Map();
 
   for (const item of results) {
@@ -201,12 +207,12 @@ async function verifyPendingPredictions(results) {
     }
   }
 
-  // Check every pending prediction
+  // Verify every pending prediction
   for (const prediction of pendingPredictions) {
     const actual =
       actualResults.get(prediction.period);
 
-    // Result is not available yet
+    // Result not available yet
     if (!actual) continue;
 
     const status =
@@ -218,33 +224,33 @@ async function verifyPendingPredictions(results) {
       await supabase
         .from("prediction_history")
         .update({
-          actual: actual,
-          status: status,
+          actual,
+          status,
           updated_at: new Date().toISOString()
         })
         .eq("id", prediction.id);
 
     if (updateError) {
       console.error(
-        `❌ Failed to update ${prediction.period}:`,
-        updateError.message
+        `❌ Failed to update ${prediction.period}: ${updateError.message}`
       );
-    } else {
-      const icon =
-        status === "Win" ? "🏆" : "❌";
-
-      console.log(
-        `${icon} ${prediction.period} → ` +
-        `Prediction: ${prediction.prediction} | ` +
-        `Actual: ${actual} | ${status}`
-      );
+      continue;
     }
+
+    const icon =
+      status === "Win" ? "🏆" : "❌";
+
+    console.log(
+      `${icon} ${prediction.period} → ` +
+      `Prediction: ${prediction.prediction} | ` +
+      `Actual: ${actual} | ${status}`
+    );
   }
 }
 
-// ================================
+// ==========================================
 // CREATE NEW PREDICTION
-// ================================
+// ==========================================
 
 async function createPrediction(latestResult) {
   const latestPeriod =
@@ -258,7 +264,7 @@ async function createPrediction(latestResult) {
     targetPeriod
   );
 
-  // Check if prediction already exists
+  // Check existing prediction
   const { data: existing, error: checkError } =
     await supabase
       .from("prediction_history")
@@ -272,16 +278,13 @@ async function createPrediction(latestResult) {
     );
   }
 
-  // Already exists: don't call planner again
   if (existing) {
     console.log(
       `⏭️ Already saved: ${existing.prediction} (${existing.status})`
     );
-
     return;
   }
 
-  // Fetch new prediction
   console.log(
     "🤖 Fetching new planner signal..."
   );
@@ -294,13 +297,14 @@ async function createPrediction(latestResult) {
     prediction
   );
 
-  // Save prediction
+  // Save to database
   const { data, error } =
     await supabase
       .from("prediction_history")
       .insert({
         period: targetPeriod,
-        prediction: prediction,
+        prediction,
+        actual: null,
         status: "Pending"
       })
       .select();
@@ -317,9 +321,9 @@ async function createPrediction(latestResult) {
   );
 }
 
-// ================================
+// ==========================================
 // MAIN WORKER CYCLE
-// ================================
+// ==========================================
 
 async function workerCycle() {
   console.log(
@@ -328,9 +332,8 @@ async function workerCycle() {
   );
 
   try {
-    // 1. Fetch all current results
+    // Step 1: Get latest results
     const results = await fetchResults();
-
     const latest = results[0];
 
     if (!latest) {
@@ -354,14 +357,14 @@ async function workerCycle() {
       }
     );
 
-    // 2. Verify old pending predictions
+    // Step 2: Verify previous predictions
     console.log(
       "🔍 Checking pending predictions..."
     );
 
     await verifyPendingPredictions(results);
 
-    // 3. Create prediction for next period
+    // Step 3: Create next prediction
     await createPrediction(latest);
 
   } catch (error) {
@@ -372,15 +375,17 @@ async function workerCycle() {
   }
 }
 
-// ================================
-// CONTINUOUS BACKGROUND LOOP
-// ================================
+// ==========================================
+// CONTINUOUS BACKGROUND WORKER
+// ==========================================
 
 let isRunning = false;
 
 async function runWorker() {
-  // Prevent overlapping cycles
-  if (isRunning) return;
+  // Prevent overlapping worker cycles
+  if (isRunning) {
+    return;
+  }
 
   isRunning = true;
 
@@ -391,20 +396,26 @@ async function runWorker() {
   }
 }
 
-// Start immediately
+// ==========================================
+// START WORKER
+// ==========================================
+
+console.log("🚀 Wingo Background Worker started");
+
 runWorker();
 
-// Continue every 5 seconds
 setInterval(runWorker, INTERVAL);
 
-// Keep process error-safe
 process.on("unhandledRejection", error => {
   console.error(
     "❌ Unhandled rejection:",
-    error.message
+    error?.message || error
   );
 });
 
-console.log(
-  "🚀 Wingo Background Worker started"
-);
+process.on("uncaughtException", error => {
+  console.error(
+    "❌ Uncaught exception:",
+    error?.message || error
+  );
+});
